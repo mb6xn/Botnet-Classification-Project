@@ -28,6 +28,7 @@ library(mlbench)
 library(ggcorrplot)
 library(C50)
 library(stringr)
+library(cvTools)
 flowData <- read.csv("C:/Users/mb6xn/DS4001/capture20110810.binetflow") #1
 #Out of necessity, get rid of sTos and dTos
 flowData <- select(flowData, -sTos, -dTos)
@@ -39,7 +40,7 @@ flow3 <- read.csv("C:/Users/mb6xn/DS4001/capture20110816-3.binetflow") #8
 flow3 <- select(flow3, -sTos, -dTos)
 flow4 <- read.csv("C:/Users/mb6xn/DS4001/capture20110818.binetflow")   #10
 flow4 <- select(flow4, -sTos, -dTos)
-View(flow4)
+#View(flow4)
 ```
 
 
@@ -67,7 +68,7 @@ mutate(botsInfo, total=botsInfo2$total, dProp=botsInfo2$dProp)
 #As we can see, 12835 of the 40961 observations have an NA value for dTos.
 #dTos: destination TOS bit value.  TOS bit is related to the IP header.
 #sTos seems to always be 0, and dTos NA or 0.  Thus we should remove these attributes.
-#View(bots)
+View(bots)
 ```
 
 #Simplify Dataset and add Binary Classifier
@@ -182,12 +183,13 @@ Here we show the summary to give us an idea of variable importantance.  FOR THIS
 
 #A problem.
 ```{r}
-#Problem experienced: Filter out NA values -> much of the botnet observations go away.
+#Problem experienced: If you filter out NA values, much of the botnet observations go away.
 
-#botNO1 <- filter(!na.omit(flowData), grepl("Botnet",Label))
-botNO1 <- flowData[!complete.cases(flowData), ]
-botNO1 <- filter(botNO1, grepl("Botnet", Label))
-View(botNO1)
+#Old code that originally let me discover this:
+
+#botNO1 <- flowData[!complete.cases(flowData), ]
+#botNO1 <- filter(botNO1, grepl("Botnet", Label))
+#View(botNO1)
 
 #Here we see that the NA's pretty much all come from the sTos value.  Also dTOs is almost always zero
 #Thus we should get rid of these features.
@@ -197,42 +199,42 @@ View(botNO1)
 ```{r}
 #1
 noBots1 <- filter(na.omit(flowData), !grepl("Botnet",Label))
-noPart1 <- sample_n(noBots1, 18000)
+noPart1 <- sample_n(noBots1, 9000)
 bot1 <- filter(na.omit(flowData), grepl("Botnet",Label))
-botPart1 <- sample_n(bot1,2000)
+botPart1 <- sample_n(bot1,1000)
 flowF1 <- rbind(noPart1, botPart1)
-flowF1 <- sample_n(flowF1, 20000)
+flowF1 <- sample_n(flowF1, 10000)
 #2
 noBots2 <- filter(na.omit(flow1), !grepl("Botnet",Label))
-noPart2 <- sample_n(noBots2, 18000)
+noPart2 <- sample_n(noBots2, 9000)
 bot2 <- filter(na.omit(flow1), grepl("Botnet",Label))
-botPart2 <- sample_n(bot2,2000)
+botPart2 <- sample_n(bot2,1000)
 flowF2 <- rbind(noPart2, botPart2)
-flowF2 <- sample_n(flowF2, 20000)
+flowF2 <- sample_n(flowF2, 10000)
 #3
 noBots3 <- filter(na.omit(flow2), !grepl("Botnet",Label))
-noPart3 <- sample_n(noBots3, 18000)
+noPart3 <- sample_n(noBots3, 9000)
 bot3 <- filter(na.omit(flow2), grepl("Botnet",Label))
-botPart3 <- sample_n(bot3,2000)
+botPart3 <- sample_n(bot3,1000)
 flowF3 <- rbind(noPart3, botPart3)
-flowF3 <- sample_n(flowF3, 20000)
+flowF3 <- sample_n(flowF3, 10000)
 #4
 noBots4 <- filter(na.omit(flow3), !grepl("Botnet",Label))
-noPart4 <- sample_n(noBots4, 18000)
+noPart4 <- sample_n(noBots4, 9000)
 bot4 <- filter(na.omit(flow3), grepl("Botnet",Label))
-botPart4 <- sample_n(bot4,2000)
+botPart4 <- sample_n(bot4,1000)
 flowF4 <- rbind(noPart4, botPart4)
-flowF4 <- sample_n(flowF4, 20000)
+flowF4 <- sample_n(flowF4, 10000)
 #5
 noBots5 <- filter(na.omit(flow4), !grepl("Botnet",Label))
-noPart5 <- sample_n(noBots5, 18000)
+noPart5 <- sample_n(noBots5, 9000)
 bot5 <- filter(na.omit(flow4), grepl("Botnet",Label))
-botPart5 <- sample_n(bot5,2000)
+botPart5 <- sample_n(bot5,1000)
 flowF5 <- rbind(noPart5, botPart5)
-flowF5 <- sample_n(flowF5, 20000)
+flowF5 <- sample_n(flowF5, 10000)
 
 flowF <- rbind(flowF1, flowF2, flowF3, flowF4, flowF5)
-#flowF <- sample_n(flowF, 20000)  If we wanted all dataset obs. mixed together
+#flowF <- sample_n(flowF, 50000)  If we wanted all dataset obs. mixed together
 flowF <- mutate(flowF, bin=grepl("Botnet",flowF$Label)) #works
 flowF$bin <- as.factor(flowF$bin)
 flowF <- select(flowF, -StartTime, -Label, -SrcAddr, -DstAddr)
@@ -257,21 +259,226 @@ summary(flowFF)
 
 ```
 
-To recall, flowF is a 100,000-observation dataframe neatly partitioned in 20,000-obs. sections that correspond to a particular CTU-13 dataset.  The idea is that we will do 5-fold CV so that 4 different CTU-13 datasets predict a completely separate one.  This will give us a broad indicator of performance.
+To recall, flowF is a 50,000-observation dataframe neatly partitioned in 10,000-obs. sections that correspond to a particular CTU-13 dataset.  The idea is that we will do 5-fold CV so that 4 different CTU-13 datasets predict a completely separate one.  This will give us a broad indicator of performance.
 
 #Cross Validation here!
 ```{r}
 #5 fold, should try decision tree first.  Overall plan is to do this, then variable selection, then more models.
 
+k <- 5
+folds <- cvFolds(NROW(flowFF), K=5)
+flowFF$holdoutpred <- rep(0,nrow(flowFF))
+accuracy.vector <- rep(0,k)
 
+for(i in 1:k){
+  train <- flowFF[folds$subsets[folds$which != i], ] #Set the training set
+  test <- flowFF[folds$subsets[folds$which == i], ] #Set the validation set
+  ## Setup to run inner loop (indicate 5-fold CV):
+  FFlowC5.0 <- C5.0(bin~., data=train)
+  flow_pred <- predict(FFlowC5.0, test)
+  
+  ## Check accuracy for the ith test fold
+  #print(flow_pred)
+  accuracy.vector[i] <- mean(flow_pred==test$bin)
+  
+  flowFF[folds$subsets[folds$which == i], ]$holdoutpred <- flow_pred
+}
 
+accuracy.vector
+CrossTable(flowFF$bin, flowFF$holdoutpred,
+           prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+           dnn = c('actual Class', 'predicted Class'))
+```
 
+#Variable Importance
+```{r}
+varImp(FFlowC5.0)
 
+```
+Ignoring holdoutpred (it is literally the prediction), the most important variable for this model was the Source Port with a score of *91.36*.  In a distant second and third are a high Port # and the Destination Port.  For context these are all port number features, where the port number corresponds to network protocols such as DNS lookup.  And afterwards come State, Dir, and byteRate respectively.  Without even visualizing, we can tell from the numbers that feature cutoffs belong after Dport and after byteRate.
 
+Let us create two new C5.0 models that reflect these cutoffs.
+
+```{r}
+#Cutoff 1 (Sport, highPort, Dport)
+
+k <- 5
+folds <- cvFolds(NROW(flowFF), K=5)
+flowFF$holdoutpred <- rep(0,nrow(flowFF))
+accuracy.vector <- rep(0,k)
+
+for(i in 1:k){
+  train <- flowFF[folds$subsets[folds$which != i], ] #Set the training set
+  test <- flowFF[folds$subsets[folds$which == i], ] #Set the validation set
+  ## Setup to run inner loop (indicate 5-fold CV):
+  FFlowC5.0 <- C5.0(bin~ Sport + highPort + Dport, data=train)
+  flow_pred <- predict(FFlowC5.0, test)
+  
+  ## Check accuracy for the ith test fold
+  #print(flow_pred)
+  accuracy.vector[i] <- mean(flow_pred==test$bin)
+  
+  flowFF[folds$subsets[folds$which == i], ]$holdoutpred <- flow_pred
+}
+
+accuracy.vector
+CrossTable(flowFF$bin, flowFF$holdoutpred,
+           prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+           dnn = c('actual Class', 'predicted Class'))
 
 
 
 ```
+False, 2: False Positive      True, 1: True negative
+
+This is a much better model in terms of accuracy.  The number of true negatives decreased substantially (meaning many more flows are classified as botnet traffic), yet the number of false positives increased.
+
+```{r}
+#Cutoff 2 (Sport, highPort, Dport, State, Dir, byteRate)
+k <- 5
+folds <- cvFolds(NROW(flowFF), K=5)
+flowFF$holdoutpred <- rep(0,nrow(flowFF))
+accuracy.vector <- rep(0,k)
+
+for(i in 1:k){
+  train <- flowFF[folds$subsets[folds$which != i], ] #Set the training set
+  test <- flowFF[folds$subsets[folds$which == i], ] #Set the validation set
+  ## Setup to run inner loop (indicate 5-fold CV):
+  FFlowC5.0 <- C5.0(bin~ Sport + highPort + Dport + State + Dir + byteRate, data=train)
+  flow_pred <- predict(FFlowC5.0, test)
+  
+  ## Check accuracy for the ith test fold
+  #print(flow_pred)
+  accuracy.vector[i] <- mean(flow_pred==test$bin)
+  
+  flowFF[folds$subsets[folds$which == i], ]$holdoutpred <- flow_pred
+}
+
+accuracy.vector
+CrossTable(flowFF$bin, flowFF$holdoutpred,
+           prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+           dnn = c('actual Class', 'predicted Class'))
+
+
+
+```
+This is a superior model to the previous two because it has roughly the same number of true negatives as Cutoff 1 yet there are much fewer false positives.
+
+
+
+Let us now use a Random Forest.  Because RandomForest cannot handle State as factor due to its 139 levels, we will convert it to numeric.
+```{r}
+flowFFF <- flowFF
+flowFFF$State <- as.numeric(flowFFF$State)
+k <- 5
+folds <- cvFolds(NROW(flowFFF), K=5)
+flowFF$holdoutpred <- rep(0,nrow(flowFFF))
+accuracy.vector <- rep(0,k)
+str(flowFFF)
+
+for(i in 1:k){
+  train <- flowFFF[folds$subsets[folds$which != i], ] #Set the training set
+  test <- flowFFF[folds$subsets[folds$which == i], ] #Set the validation set
+  ## Setup to run inner loop (indicate 5-fold CV):
+  FFlowRF <- randomForest(bin~., train, ntree=120) #about sqrt(50000)/2, sqrt(50000) too large for laptop
+  #FFlowRF <- train(bin~., data=train, method="rf", ntree=5)
+  flow_pred <- predict(FFlowRF, test)
+  
+  ## Check accuracy for the ith test fold
+  #print(flow_pred)
+  accuracy.vector[i] <- mean(flow_pred==test$bin)
+  
+  flowFFF[folds$subsets[folds$which == i], ]$holdoutpred <- flow_pred
+}
+
+accuracy.vector
+CrossTable(flowFFF$bin, flowFFF$holdoutpred,
+           prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+           dnn = c('actual Class', 'predicted Class'))
+```
+```{r}
+FFlowRF
+```
+
+
+```{r}
+
+varImp(FFlowRF)
+varImpPlot(FFlowRF,type=2)
+```
+Again, holdoutpred is exactly what the model predicted so it has no importance to us in this plot.  We see that Sport has the largest MeanDecreaseGini, with Dport and bytePerPacket trailing behind and RST surprisingly not too far behind.  From the plot it is evident that we should try placing variable cutoffs after bytePerPacket and after RST.
+```{r}
+#Cutoff 1: Sport + Dport + bytePerPacket
+flowFFF <- flowFF
+flowFFF$State <- as.numeric(flowFFF$State)
+k <- 5
+folds <- cvFolds(NROW(flowFFF), K=5)
+flowFF$holdoutpred <- rep(0,nrow(flowFFF))
+accuracy.vector <- rep(0,k)
+str(flowFFF)
+
+for(i in 1:k){
+  train <- flowFFF[folds$subsets[folds$which != i], ] #Set the training set
+  test <- flowFFF[folds$subsets[folds$which == i], ] #Set the validation set
+  ## Setup to run inner loop (indicate 5-fold CV):
+  FFlowRF <- randomForest(bin~ Sport + Dport + bytePerPacket, train, ntree=120) #about sqrt(50000)/2, sqrt(50000) too large for laptop
+  #FFlowRF <- train(bin~., data=train, method="rf", ntree=5)
+  flow_pred <- predict(FFlowRF, test)
+  
+  ## Check accuracy for the ith test fold
+  #print(flow_pred)
+  accuracy.vector[i] <- mean(flow_pred==test$bin)
+  
+  flowFFF[folds$subsets[folds$which == i], ]$holdoutpred <- flow_pred
+}
+
+accuracy.vector
+CrossTable(flowFFF$bin, flowFFF$holdoutpred,
+           prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+           dnn = c('actual Class', 'predicted Class'))
+```
+
+```{r}
+#Cutoff 2: Sport + Dport + bytePerPacket + RST
+flowFFF <- flowFF
+flowFFF$State <- as.numeric(flowFFF$State)
+k <- 5
+folds <- cvFolds(NROW(flowFFF), K=5)
+flowFF$holdoutpred <- rep(0,nrow(flowFFF))
+accuracy.vector <- rep(0,k)
+str(flowFFF)
+
+for(i in 1:k){
+  train <- flowFFF[folds$subsets[folds$which != i], ] #Set the training set
+  test <- flowFFF[folds$subsets[folds$which == i], ] #Set the validation set
+  ## Setup to run inner loop (indicate 5-fold CV):
+  FFlowRF <- randomForest(bin~ Sport + Dport + bytePerPacket + RST, train, ntree=120) #about sqrt(50000)/2, sqrt(50000) too large for laptop
+  #FFlowRF <- train(bin~., data=train, method="rf", ntree=5)
+  flow_pred <- predict(FFlowRF, test)
+  
+  ## Check accuracy for the ith test fold
+  #print(flow_pred)
+  accuracy.vector[i] <- mean(flow_pred==test$bin)
+  
+  flowFFF[folds$subsets[folds$which == i], ]$holdoutpred <- flow_pred
+}
+
+accuracy.vector
+CrossTable(flowFFF$bin, flowFFF$holdoutpred,
+           prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+           dnn = c('actual Class', 'predicted Class'))
+```
+Even better results.
+
+
+Finally let's implement boosting to see if we can get even better results.
+
+
+
+
+
+
+
 
 
 #Take all features and engineered, then make model, then decide top features i.e STEP aic, also variable importance ranking.  #Variable importance plot......   In markwdown, focus is on code and explaining code.  Make things clear.  Don't need to provide background.
