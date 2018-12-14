@@ -1,0 +1,288 @@
+---
+title: "FinalProject1"
+author: "Matthew Bielskas"
+date: "November 5, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r setup}
+#Set up libraries and view data
+library(tidyverse)
+library(caret)
+library(e1071)
+library(randomForest)
+library(ipred)
+library(gmodels)
+library(adabag)
+library(mlbench)
+library(ggcorrplot)
+library(C50)
+library(stringr)
+flowData <- read.csv("C:/Users/mb6xn/DS4001/capture20110810.binetflow") #1
+#Out of necessity, get rid of sTos and dTos
+flowData <- select(flowData, -sTos, -dTos)
+flow1 <- read.csv("C:/Users/mb6xn/DS4001/capture20110812.binetflow")   #3
+flow1 <- select(flow1, -sTos, -dTos)
+flow2 <- read.csv("C:/Users/mb6xn/DS4001/capture20110816.binetflow")   #6
+flow2 <- select(flow2, -sTos, -dTos)
+flow3 <- read.csv("C:/Users/mb6xn/DS4001/capture20110816-3.binetflow") #8
+flow3 <- select(flow3, -sTos, -dTos)
+flow4 <- read.csv("C:/Users/mb6xn/DS4001/capture20110818.binetflow")   #10
+flow4 <- select(flow4, -sTos, -dTos)
+View(flow4)
+```
+
+
+## Initial Exploration
+
+```{r exploration}
+#Filter to see Botnet flows
+#head(flowData)
+bots <- filter(flowData, grepl("Botnet",Label))
+normal <- filter(flowData, grepl("Normal",Label))
+background <- filter(flowData, grepl("Background",Label))
+bots$sTos=NULL
+bots$dTos=NULL
+botsInfo <- bots %>% filter(grepl("DNS",bots$Label)) %>% summarize(dns=n())
+botsInfo2 <- bots %>% summarize(total=n(), dProp=botsInfo$dns/total)
+#botsInfo3 <- bots %>% filter(grepl("RST",bots$Label)) %>% summarize(dns=n())
+#botsInfo3
+#flows with DNS include "UDP-DNS" and "UDP-Attempt-DNS"
+mutate(botsInfo, total=botsInfo2$total, dProp=botsInfo2$dProp)
+#Note that ~71% of packets sent from the Botnet are either successful or attempted DNS queries
+
+#View(bots)
+
+#View(filter(bots,is.na(bots$dTos)))
+#As we can see, 12835 of the 40961 observations have an NA value for dTos.
+#dTos: destination TOS bit value.  TOS bit is related to the IP header.
+#sTos seems to always be 0, and dTos NA or 0.  Thus we should remove these attributes.
+#View(bots)
+```
+
+#Simplify Dataset and add Binary Classifier
+```{r, echo=FALSE}
+#summary(flowData)
+#summary(bots)
+noBots <- filter(na.omit(flowData), !grepl("Botnet",Label))
+noPart <- sample_n(noBots, 225000)
+bot <- filter(na.omit(flowData), grepl("Botnet",Label))
+botPart <- sample_n(bot,25000)
+flowData1 <- rbind(noPart, botPart)
+flowData1 <- sample_n(flowData1, 250000)
+flowData1 <- mutate(flowData1, bin=grepl("Botnet",flowData1$Label)) #works
+flowData1$bin <- as.factor(flowData1$bin)
+flowData1 <- select(flowData1, -StartTime, -Label, -SrcAddr, -DstAddr)
+levels(flowData1$Dir) <- c('right','quRight', 'left', 'both','quLeft','quBoth', 'idk')
+#flowData1$SrcAddr <- as.factor(str_replace_all(flowData1$SrcAddr, "[.]", "a"))
+#flowData1$DstAddr <- as.factor(str_replace_all(flowData1$DstAddr, "[.]", "a"))
+flowData1$State <- as.factor(str_replace_all(flowData1$State, "[_]", "a"))
+summary(flowData1)
+#View(flowData1)
+```
+This dataset has over 2,000,000 observations and we have decided that we will not be looking at StartTime.  Additionally an overwhelming majority of them are not part of a botnet.  Let's simplify so that we have 45,000 non=Botnet obs. and 5,000 botnet obs.  This should not drastically change the project while bringing it to a scope where running ML algorithms is quick on the average computer.
+
+
+#CorrelationMatrix
+```{r, echo=FALSE}
+#class(flowData$StartTime)  Convert from factor to numeric for correlationMatrix
+#flowDataC <- flowData1
+#flowDataC$StartTime <- as.numeric(flowDataC$StartTime)
+#flowDataC$Proto <- as.numeric(flowDataC$Proto)
+#flowDataC$SrcAddr <- as.numeric(flowDataC$SrcAddr)
+#flowDataC$Dir <- as.numeric(flowDataC$Dir)
+#flowDataC$DstAddr <- as.numeric(flowDataC$DstAddr)
+#flowDataC$State <- as.numeric(flowDataC$State)
+#flowDataC$sTos <- as.numeric(flowDataC$sTos) #integer, and dTos
+#flowDataC$dTos <- as.numeric(flowDataC$dTos)
+#flowDataC$TotPkts <- as.numeric(flowDataC$TotPkts) #integer
+
+#summary(flowDataC)
+#correlationMatrix <- cor(flowDataC[,1:14])
+#ggcorrplot(correlationMatrix, method="circle") #fascinating   
+#A lot of correlation between Dir/Proto, and among TotPkts/TotBytes/SrcBytes
+
+```
+#C5.0 All Features
+```{r}
+#class(flow_train$sTos)
+#nlevels(flow_train$bin)
+set.seed(345)
+index <- createDataPartition(flowData1$bin, p=0.8, list=FALSE)
+flow_train <- flowData1[index,]
+flow_test <- flowData1[-index,]
+#set.seed(543)
+#index <- createDataPartition(credit_train$Creditability, p=0.8, list=FALSE)
+#train_set <- credit_train[index,]
+#validation_set <- credit_train[-index,]
+
+#control <- trainControl(method="repeatedcv", number=10, repeats=1) #CV, can see progress
+#model <- train(Label~., data=flowData, trim=TRUE, returnData=FALSE, method="C5.0", trControl=control)
+
+#flowC5.0 <- C5.0(flow_train[,-14], flow_train$bin)
+flowC50 <- C5.0(bin~., data=flow_train)
+#summary(flowC50)
+
+flow_pred <- predict(flowC50, flow_test)
+
+CrossTable(flow_test$bin, flow_pred,
+           prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+           dnn = c('actual Class', 'predicted Class'))
+
+```
+
+After originally testing the C5.0 algorithm, I was concerned because I achieved 100% accuracy.  By checking the Bot dataframe, I realized that the bots report to a fixed botmaster which clearly caused bias in my results.  Thus it is a necessary step to remove the Source and Destination IP features.]
+
+So here we get very impressive results, just from a C5.0 tree with no additional featres.  However note that the CRT-13 botnet datasets vary in the activities that the botnet partakes in.  To accompany for this diversity, let's divide the training and test set into assorted CRT-13 datasets.  For the sake of computational power, we will work with a concatenation of these datasets reduced down to a 1000/9000-observation split each.
+
+#New Features
+```{r}
+#DNS -> Port 53, likely to be involved in a botnet.
+flowData2 <- flowData1
+
+flowData2 <- flowData1 %>% mutate(DNS=as.factor(Dport==53), highPort=as.factor(Dport>9999), bytePerPacket=TotPkts/TotBytes, byteRate=TotBytes/Dur, packetRate=bytePerPacket*byteRate, fragmented=as.factor(TotBytes>65535))
+#Inf -> dur=0      let's add a feature for Dur=0
+flowData2 <- flowData2 %>% mutate(emptyDur=as.factor(as.numeric(Dur)==0), RST=as.factor(grepl("Sa", State)))
+
+#Replace Inf with 99999999
+flowData2[flowData2 == Inf] <- 99999999
+summary(flowData2)
+
+#Note: RST means that the host refuses to make a connection.  Let's make an indicator variable for that.
+#"Unusually high ports" -> >10000
+
+
+```
+#Try C5.0 again
+```{r}
+set.seed(345)
+index <- createDataPartition(flowData2$bin, p=0.8, list=FALSE)
+flow_train <- flowData2[index,]
+flow_test <- flowData2[-index,]
+flowC50 <- C5.0(bin~., data=flow_train)
+flow_pred <- predict(flowC50, flow_test)
+
+CrossTable(flow_test$bin, flow_pred,
+           prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+           dnn = c('actual Class', 'predicted Class'))
+```
+Here we show the summary to give us an idea of variable importantance.  FOR THIS FIRST DATASET (change later), SPort and DPort are by far the most important features.
+
+#Let's repeat this process with a cross-validation approach (over these sections)
+
+#A problem.
+```{r}
+#Problem experienced: Filter out NA values -> much of the botnet observations go away.
+
+#botNO1 <- filter(!na.omit(flowData), grepl("Botnet",Label))
+botNO1 <- flowData[!complete.cases(flowData), ]
+botNO1 <- filter(botNO1, grepl("Botnet", Label))
+View(botNO1)
+
+#Here we see that the NA's pretty much all come from the sTos value.  Also dTOs is almost always zero
+#Thus we should get rid of these features.
+```
+
+#Create dataframe for CV approach
+```{r}
+#1
+noBots1 <- filter(na.omit(flowData), !grepl("Botnet",Label))
+noPart1 <- sample_n(noBots1, 18000)
+bot1 <- filter(na.omit(flowData), grepl("Botnet",Label))
+botPart1 <- sample_n(bot1,2000)
+flowF1 <- rbind(noPart1, botPart1)
+flowF1 <- sample_n(flowF1, 20000)
+#2
+noBots2 <- filter(na.omit(flow1), !grepl("Botnet",Label))
+noPart2 <- sample_n(noBots2, 18000)
+bot2 <- filter(na.omit(flow1), grepl("Botnet",Label))
+botPart2 <- sample_n(bot2,2000)
+flowF2 <- rbind(noPart2, botPart2)
+flowF2 <- sample_n(flowF2, 20000)
+#3
+noBots3 <- filter(na.omit(flow2), !grepl("Botnet",Label))
+noPart3 <- sample_n(noBots3, 18000)
+bot3 <- filter(na.omit(flow2), grepl("Botnet",Label))
+botPart3 <- sample_n(bot3,2000)
+flowF3 <- rbind(noPart3, botPart3)
+flowF3 <- sample_n(flowF3, 20000)
+#4
+noBots4 <- filter(na.omit(flow3), !grepl("Botnet",Label))
+noPart4 <- sample_n(noBots4, 18000)
+bot4 <- filter(na.omit(flow3), grepl("Botnet",Label))
+botPart4 <- sample_n(bot4,2000)
+flowF4 <- rbind(noPart4, botPart4)
+flowF4 <- sample_n(flowF4, 20000)
+#5
+noBots5 <- filter(na.omit(flow4), !grepl("Botnet",Label))
+noPart5 <- sample_n(noBots5, 18000)
+bot5 <- filter(na.omit(flow4), grepl("Botnet",Label))
+botPart5 <- sample_n(bot5,2000)
+flowF5 <- rbind(noPart5, botPart5)
+flowF5 <- sample_n(flowF5, 20000)
+
+flowF <- rbind(flowF1, flowF2, flowF3, flowF4, flowF5)
+#flowF <- sample_n(flowF, 20000)  If we wanted all dataset obs. mixed together
+flowF <- mutate(flowF, bin=grepl("Botnet",flowF$Label)) #works
+flowF$bin <- as.factor(flowF$bin)
+flowF <- select(flowF, -StartTime, -Label, -SrcAddr, -DstAddr)
+levels(flowF$Dir) <- c('right','quRight', 'left', 'both','quLeft','quBoth', 'idk')
+flowF$State <- as.factor(str_replace_all(flowF$State, "[_]", "a"))
+```
+
+```{r}
+#DNS -> Port 53, likely to be involved in a botnet.
+flowFF <- flowF %>% mutate(DNS=as.factor(Dport==53), highPort=as.factor(Dport>9999), bytePerPacket=TotPkts/TotBytes, byteRate=TotBytes/Dur, packetRate=bytePerPacket*byteRate, fragmented=as.factor(TotBytes>65535))
+#Inf -> dur=0      let's add a feature for Dur=0
+flowFF <- flowFF %>% mutate(emptyDur=as.factor(as.numeric(Dur)==0), RST=as.factor(grepl("Sa", State)))
+
+#Replace Inf with 999999999    #Looking at the mean would not be helpful if we required it.
+flowFF[flowFF == Inf] <- 999999999
+summary(flowFF)
+
+#Note: RST means that the host refuses to make a connection.  Let's make an indicator variable for that.
+#"Unusually high ports" -> >10000
+
+
+
+```
+
+To recall, flowF is a 100,000-observation dataframe neatly partitioned in 20,000-obs. sections that correspond to a particular CTU-13 dataset.  The idea is that we will do 5-fold CV so that 4 different CTU-13 datasets predict a completely separate one.  This will give us a broad indicator of performance.
+
+#Cross Validation here!
+```{r}
+#5 fold, should try decision tree first.  Overall plan is to do this, then variable selection, then more models.
+
+
+
+
+
+
+
+
+
+```
+
+
+#Take all features and engineered, then make model, then decide top features i.e STEP aic, also variable importance ranking.  #Variable importance plot......   In markwdown, focus is on code and explaining code.  Make things clear.  Don't need to provide background.
+
+
+#Put all together and do binary...
+#Things behave differently -> maybe find model that on average works the best
+#Maybe categorical output type of model.
+#Find model that works best for each, separately.
+
+
+#Presentation- 11 minutes...
+#2 slides on background (succinct), context- what I am out to do.  Why is this interesting?  Preprocessing, etc.
+
